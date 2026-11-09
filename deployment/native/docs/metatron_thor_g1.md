@@ -155,6 +155,10 @@ runtime's last accepted state, so Y can revive a faulted runtime.
 | R1 | Return to idle/standing |
 | X | Damping, with priority while held |
 
+The optional [seat interaction adapter](metatron_thor_g1_seat.md) adds B to
+sit and R1 to stand using supplied chair geometry and placement. It uses the
+same executable and weights; the standard command above remains walking-only.
+
 The same foreground entry point runs the simulation fixture:
 
 ```bash
@@ -213,7 +217,9 @@ establish a 20 ms worst-case deadline under concurrent model serving. The
 standalone benchmark and the zero-overrun simulation table above must not be
 used to claim otherwise. The unrelated serving process was left unchanged.
 
-Object interaction, motion tracking, style selection and PICO control are not
-exposed by this launcher. Neither the standing/walking result nor the unit tests
-establish reproduction of every paper skill. The failed prone fixture remains
-open and must not be presented as successful recovery.
+The fixed-seat adapter has passed the measured-chair simulation and is under
+physical evaluation. General object interaction, motion tracking, style
+selection and PICO control remain outside this launcher's exposed modes.
+Neither standing/walking nor these unit tests establish reproduction of every
+paper skill. The failed prone fixture remains open and must not be presented
+as successful recovery.

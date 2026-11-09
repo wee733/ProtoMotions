@@ -14,9 +14,12 @@
 #include <csignal>
 #include <fstream>
 #include <iostream>
+#include <limits>
 #include <memory>
+#include <optional>
 #include <stdexcept>
 #include <string>
+#include <string_view>
 #include <thread>
 #include <vector>
 
@@ -45,10 +48,13 @@ struct Options {
   std::string backend = "mujoco";
   std::string xml, engine, fk_engine, manifest, recovery_plan, xbox_device, net_if;
   std::string glfw_library;
+  std::string seat_body;
+  std::optional<float> seat_distance;
   bool arm = false;
   bool cuda_graph = false;
   bool viewer = false;
   bool scripted_sim = false;
+  bool scripted_seat = false;
   bool unitree_remote = false;
   int steps = 0;
   int dds_participant_index = 0;
@@ -62,6 +68,7 @@ Options parse(int argc, char** argv) {
     else if (flag == "--cuda-graphs") args.cuda_graph = true;
     else if (flag == "--viewer") args.viewer = true;
     else if (flag == "--scripted-sim") args.scripted_sim = true;
+    else if (flag == "--scripted-seat") args.scripted_seat = true;
     else if (flag == "--unitree-remote") args.unitree_remote = true;
     else {
       if (index + 1 >= argc) throw std::invalid_argument("missing value for " + flag);
@@ -75,6 +82,8 @@ Options parse(int argc, char** argv) {
       else if (flag == "--xbox-device") args.xbox_device = value;
       else if (flag == "--net-if") args.net_if = value;
       else if (flag == "--glfw-lib") args.glfw_library = value;
+      else if (flag == "--seat-body") args.seat_body = value;
+      else if (flag == "--seat-distance") args.seat_distance = std::stof(value);
       else if (flag == "--steps") args.steps = std::stoi(value);
       else if (flag == "--dds-participant-index")
         args.dds_participant_index = std::stoi(value);
@@ -86,16 +95,24 @@ Options parse(int argc, char** argv) {
       args.engine.empty() || args.fk_engine.empty() ||
       args.manifest.empty() || args.steps < 0)
     throw std::invalid_argument("required: --backend mujoco|unitree --engine --fk-engine --manifest; MuJoCo also requires --xml");
-  if (static_cast<int>(args.scripted_sim) + static_cast<int>(args.unitree_remote) +
+  if (static_cast<int>(args.scripted_sim) + static_cast<int>(args.scripted_seat) + static_cast<int>(args.unitree_remote) +
           static_cast<int>(!args.xbox_device.empty()) != 1)
-    throw std::invalid_argument("select one input: --unitree-remote, --xbox-device PATH or --scripted-sim");
+    throw std::invalid_argument("select one input: --unitree-remote, --xbox-device PATH, --scripted-sim or --scripted-seat");
   if (args.unitree_remote && args.backend != "unitree")
     throw std::invalid_argument("--unitree-remote requires --backend unitree");
   if (args.backend == "unitree" &&
       (!args.arm || args.net_if.empty() || if_nametoindex(args.net_if.c_str()) == 0))
     throw std::invalid_argument("hardware requires --arm and an existing --net-if");
-  if (args.scripted_sim && args.backend != "mujoco")
+  if ((args.scripted_sim || args.scripted_seat) && args.backend != "mujoco")
     throw std::invalid_argument("scripted input is simulation-only");
+  if ((!args.seat_body.empty() && args.xml.empty()) || (args.scripted_seat && args.seat_body.empty()))
+    throw std::invalid_argument("seat interaction requires --xml and --seat-body");
+  if (args.seat_distance && (args.seat_body.empty() || !std::isfinite(*args.seat_distance) || *args.seat_distance < 0))
+    throw std::invalid_argument("--seat-distance needs a seat and a nonnegative distance in metres");
+  if (args.seat_distance && args.backend != "unitree")
+    throw std::invalid_argument("--seat-distance calibrates hardware; simulation uses the physical chair pose in MJCF");
+  if (args.backend == "unitree" && !args.seat_body.empty() && !args.seat_distance)
+    throw std::invalid_argument("hardware seat needs measured --seat-distance (ankle midpoint to front edge, metres)");
   if (args.viewer && (args.xml.empty() || args.glfw_library.empty()))
     throw std::invalid_argument("--viewer needs --xml and --glfw-lib for either backend");
   return args;
@@ -150,6 +167,78 @@ int sim_substeps_and_validate(const std::string& xml,
   }
 }
 
+SeatGeometry seat_from_xml(const std::string& xml, const std::string& body_name) {
+  char error[1024]{};
+  std::unique_ptr<mjModel, decltype(&mj_deleteModel)> model(
+      mj_loadXML(xml.c_str(), nullptr, error, sizeof(error)), mj_deleteModel);
+  if (!model) throw std::runtime_error(error[0] ? error : "seat XML load failed");
+  const int body = mj_name2id(model.get(), mjOBJ_BODY, body_name.c_str());
+  if (body < 0 || model->body_parentid[body] != 0 || model->body_jntnum[body] != 0 ||
+      model->body_mocapid[body] >= 0 || std::abs(model->body_quat[4*body+1]) > 1e-6 ||
+      std::abs(model->body_quat[4*body+2]) > 1e-6)
+    throw std::invalid_argument("seat body must be fixed in the world, with yaw only");
+  SeatGeometry result;
+  std::copy_n(model->body_pos+3*body, 3, result.object_position.begin());
+  result.yaw = 2*std::atan2(model->body_quat[4*body+3], model->body_quat[4*body]);
+  const int floor = mj_name2id(model.get(), mjOBJ_GEOM, "floor");
+  if (floor < 0 || model->geom_bodyid[floor] != 0 || model->geom_type[floor] != mjGEOM_PLANE)
+    throw std::invalid_argument("seat interaction needs the world floor plane");
+  result.ground_z = model->geom_pos[3*floor+2];
+  for (int box = 0; box < 2; ++box) {
+    const std::string name = body_name + (box == 0 ? "_seat" : "_back");
+    const int geom = mj_name2id(model.get(), mjOBJ_GEOM, name.c_str());
+    if (geom < 0 || model->geom_bodyid[geom] != body || model->geom_type[geom] != mjGEOM_BOX ||
+        std::abs(std::abs(model->geom_quat[4*geom])-1) > 1e-6)
+      throw std::invalid_argument("seat needs body-aligned box geoms: " + body_name + "_seat and _back");
+    for (int axis = 0; axis < 3; ++axis) {
+      result.centers[3*box+axis] = model->geom_pos[3*geom+axis];
+      result.extents[3*box+axis] = 2*model->geom_size[3*geom+axis];
+    }
+  }
+  return result;
+}
+
+// The chair is centered behind the standing robot, facing the same direction.
+// Capture once at startup: the physical chair is stationary while G1 moves in
+// its startup odometry frame. Ground comes from actual foot collision surfaces
+// rather than assuming the odometry Z origin coincides with the floor.
+void calibrate_seat(SeatGeometry& seat, const RobotState& state,
+                    const std::string& xml, float distance) {
+  char error[1024]{};
+  std::unique_ptr<mjModel, decltype(&mj_deleteModel)> m(
+      mj_loadXML(xml.c_str(), nullptr, error, sizeof(error)), mj_deleteModel);
+  if (!m) throw std::runtime_error(error[0] ? error : "seat calibration XML failed");
+  std::unique_ptr<mjData, decltype(&mj_deleteData)> d(mj_makeData(m.get()), mj_deleteData);
+  if (!d || state.dof_position.size() != 29) throw std::runtime_error("seat calibration needs measured G1 joints");
+  std::copy(state.root_position.begin(), state.root_position.end(), d->qpos);
+  d->qpos[3] = state.root_orientation_xyzw[3];
+  for (int axis = 0; axis < 3; ++axis) d->qpos[4+axis] = state.root_orientation_xyzw[axis];
+  for (int joint = 0; joint < m->nu; ++joint)
+    d->qpos[m->jnt_qposadr[m->actuator_trnid[2*joint]]] = state.dof_position[joint];
+  mj_forward(m.get(), d.get());
+  std::array<float, 2> feet{};
+  for (const char* name : {"left_ankle_roll_link", "right_ankle_roll_link"}) {
+    const int body = mj_name2id(m.get(), mjOBJ_BODY, name);
+    if (body < 0) throw std::runtime_error("seat calibration needs ankle roll bodies");
+    for (int axis = 0; axis < 2; ++axis) feet[axis] += 0.5*d->xpos[3*body+axis];
+  }
+  float ground = std::numeric_limits<float>::infinity();
+  for (int geom = 0; geom < m->ngeom; ++geom) {
+    const char* name = mj_id2name(m.get(), mjOBJ_GEOM, geom);
+    if (!name || !(std::string_view(name).starts_with("left_foot") ||
+                  std::string_view(name).starts_with("right_foot")) ||
+        m->geom_contype[geom] == 0 || m->geom_type[geom] != mjGEOM_CAPSULE) continue;
+    const float bottom = d->geom_xpos[3*geom+2] - m->geom_size[3*geom] -
+        std::abs(d->geom_xmat[9*geom+8])*m->geom_size[3*geom+1];
+    ground = std::min(ground, bottom);
+  }
+  if (!std::isfinite(ground)) throw std::runtime_error("seat calibration needs capsule foot collision geometry");
+  align_seat_behind(seat, feet, yaw(state.base_orientation_xyzw), ground, distance);
+  std::cout << "Seat calibrated: object_xyz=" << seat.object_position[0] << ','
+            << seat.object_position[1] << ',' << ground << " yaw=" << seat.yaw
+            << " ankle_to_front_m=" << distance << '\n';
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -164,6 +253,12 @@ int main(int argc, char** argv) {
       throw std::runtime_error("requested CUDA graphs did not capture for both engines");
     RestPose rest = make_rest_pose(fk);
     MetatronTask task(fk, rest, args.recovery_plan, body_names);
+    std::optional<SeatGeometry> seat;
+    if (!args.seat_body.empty()) {
+      sim_substeps_and_validate(args.xml, json);
+      seat = seat_from_xml(args.xml, args.seat_body);
+      task.configure_seat(*seat);
+    }
     engine.warmup(10);
     std::unique_ptr<EvdevXboxInputSource> xbox;
     UnitreeControllerInputSource remote;
@@ -175,7 +270,7 @@ int main(int argc, char** argv) {
       // that order against the policy even when physics runs on the real G1.
       if (args.backend == "unitree") sim_substeps_and_validate(args.xml, json);
       viewer = std::make_unique<AsyncMujocoViewer>(
-          args.xml, args.glfw_library, args.backend == "unitree");
+          args.xml, args.glfw_library, args.backend == "unitree", args.seat_body);
     }
     std::unique_ptr<RobotBackend> backend;
     UnitreeSdk2Backend* unitree_backend = nullptr;
@@ -229,6 +324,10 @@ int main(int argc, char** argv) {
       }
       throw std::runtime_error("no complete fresh LowState + odometry pair; no safe hold attempted");
     }
+    if (args.seat_distance) {
+      calibrate_seat(*seat, initial, args.xml, *args.seat_distance);
+      task.configure_seat(*seat);
+    }
     if (!runtime.start())
       throw std::runtime_error("startup safe hold or state validation failed: " +
                                runtime.last_fault_reason());
@@ -237,9 +336,10 @@ int main(int argc, char** argv) {
     std::cout << "Metatron v1 ready; X=damping, Y=revive idle, A=steering, RB=idle. "
                  "Starts in safe hold. backend=" << args.backend
               << " input=" << (args.unitree_remote ? "G1 remote (RB=R1)" :
-                               args.scripted_sim ? "scripted simulation" : "Xbox")
+                               args.scripted_sim || args.scripted_seat ? "scripted simulation" : "Xbox")
               << " recovery=" << (args.recovery_plan.empty() ? "paper torso-height" : "recorded plan")
               << "\n";
+    if (!args.seat_body.empty()) std::cout << "Seat configured from MJCF: B=sit, RB/R1=stand then idle\n";
     std::uint32_t previous = 0;
     bool active = false, steering = false;
     float heading_goal = 0.0F;
@@ -247,6 +347,7 @@ int main(int argc, char** argv) {
     int count = 0;
     std::uint64_t sent = 0, slow = 0, cycle_faults = 0;
     double total_command_ms = 0.0, max_command_ms = 0.0;
+    bool seated_seen = false, standing_after_seat = false;
     while (!g_stop && (args.steps == 0 || count < args.steps)) {
       next += std::chrono::milliseconds(20);
       InputState input;
@@ -255,7 +356,14 @@ int main(int argc, char** argv) {
       bool has_observed = false;
       if (unitree_backend && (args.unitree_remote || viewer))
         has_observed = unitree_backend->read_state(observed);
-      if (args.scripted_sim) {
+      if (args.scripted_seat) {
+        input.connected = true;
+        input.timestamp = Clock::now();
+        input.buttons = count == 10 ? xbox_button::kY :
+                        count == 100 ? xbox_button::kB :
+                        count == 900 ? xbox_button::kRightBumper : 0;
+        input_ready = true;
+      } else if (args.scripted_sim) {
         input.connected = true;
         input.timestamp = Clock::now();
         input.buttons = count == 10 ? xbox_button::kY :
@@ -304,7 +412,11 @@ int main(int argc, char** argv) {
         } else if (active && (pressed & xbox_button::kRightBumper)) {
           steering = false;
           task.set_idle();
-          std::cout << "RB: idle\n";
+          std::cout << "RB: stand/idle requested\n";
+        } else if (active && (pressed & xbox_button::kB) && !args.seat_body.empty()) {
+          steering = false;
+          task.set_sitting();
+          std::cout << "B: sit requested\n";
         } else if (active && (pressed & xbox_button::kA)) {
           steering = true;
           heading_goal = yaw(runtime.last_state().base_orientation_xyzw);
@@ -330,6 +442,9 @@ int main(int argc, char** argv) {
         }
       }
       const auto result = runtime.run_cycle(Clock::now());
+      seated_seen |= task.seat_phase() == "seated";
+      standing_after_seat |= seated_seen && count > 900 && task.seat_phase() == "inactive" &&
+                             runtime.last_state().root_position[2] > (seat ? seat->ground_z : 0) + 0.7;
       double command_ms = 0.0;
       if (result == CycleResult::kSent && runtime.last_cycle_timing().valid()) {
         command_ms = std::chrono::duration<double, std::milli>(
@@ -360,6 +475,7 @@ int main(int argc, char** argv) {
                   << " root_xy=" << state.root_position[0] << ',' << state.root_position[1]
                   << " root_z=" << state.root_position[2]
                   << " recovery=" << static_cast<int>(task.recovery_phase())
+                  << " seat=" << task.seat_phase()
                   << " command_ms=" << command_ms
                   << " buttons=" << input.buttons << std::endl;
       }
@@ -367,8 +483,9 @@ int main(int argc, char** argv) {
         // A fault freezes the policy's last accepted state, not the robot.
         // Continue displaying fresh transport measurements while damping.
         viewer->publish(has_observed ? observed : runtime.last_state(),
-                        {runtime.lifecycle(), steering, command_ms,
-                         runtime.fault_count(), runtime.last_fault_reason()});
+                        {runtime.lifecycle(), task.mode() == MetatronTask::Mode::kSeat
+                             ? std::string(task.seat_phase()) : steering ? "STEERING" : "IDLE", command_ms,
+                         runtime.fault_count(), runtime.last_fault_reason(), seat});
         if (viewer->closed()) break;
       }
       ++count;
@@ -379,6 +496,10 @@ int main(int argc, char** argv) {
               << " faults=" << cycle_faults << " command_over_20ms=" << slow
               << " command_mean_ms=" << (sent ? total_command_ms / sent : 0.0)
               << " command_max_ms=" << max_command_ms << std::endl;
+    if (args.scripted_seat) {
+      std::cout << "seat fixture: seated=" << seated_seen << " stood=" << standing_after_seat << '\n';
+      if (!seated_seen || !standing_after_seat || cycle_faults) return 2;
+    }
     return 0;
   } catch (const std::exception& error) {
     std::cerr << "Metatron native launch failed: " << error.what() << '\n';

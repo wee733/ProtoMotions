@@ -98,6 +98,7 @@ add_library(protomotions_deployment
   src/metatron_v1_contract.cpp
   src/metatron_v1_manifest.cpp
   src/metatron_v1_recovery.cpp
+  src/metatron_v1_seat.cpp
   src/runtime.cpp
   src/safety.cpp
   src/types.cpp
@@ -515,6 +516,11 @@ if(BUILD_TESTING)
   protomotions_configure_target(metatron_height_recovery_test)
   target_compile_options(metatron_height_recovery_test PRIVATE -UNDEBUG)
   add_test(NAME metatron_height_recovery COMMAND metatron_height_recovery_test)
+  add_executable(metatron_v1_seat_test tests/metatron_v1_seat_test.cpp)
+  target_link_libraries(metatron_v1_seat_test PRIVATE protomotions_deployment)
+  protomotions_configure_target(metatron_v1_seat_test)
+  target_compile_options(metatron_v1_seat_test PRIVATE -UNDEBUG)
+  add_test(NAME metatron_v1_seat COMMAND metatron_v1_seat_test)
   add_executable(metatron_v1_recovery_test tests/metatron_v1_recovery_test.cpp)
   target_link_libraries(metatron_v1_recovery_test PRIVATE protomotions_deployment)
   protomotions_configure_target(metatron_v1_recovery_test)

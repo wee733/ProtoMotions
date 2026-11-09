@@ -30,7 +30,7 @@ qualification. The provided Metatron v1 adapter is specific to G1.
 
 ## Metatron v1
 
-`metatron_v1::MetatronTask` assembles idle, steering and recovery goals.
+`metatron_v1::MetatronTask` assembles idle, steering, seat interaction and recovery goals.
 `MetatronController` uses the same sensor/history and accepted-command boundary
 for MuJoCo and Unitree. `Engine` executes the fixed-shape TensorRT policy;
 `FkEngine` computes the body poses for task construction from the measured
@@ -53,9 +53,14 @@ The artifact's serialized identifier and `masked_mimic.*` tensor keys are
 preserved verbatim. These are the Metatron v1 model ABI, not additional runtime
 implementations. Renaming them requires re-exporting the model and manifest.
 
-Scene-object inputs remain hidden without a localization integration. The
-launcher currently exposes idle, steering and recovery, not object interaction,
-clip tracking, style selection or Pico teleoperation.
+Scene-object inputs remain hidden unless `--seat-body` configures a fixed
+chair. `SeatInteraction` adapts the official browser's align/sit/stand goal
+rule, with object boxes and targets in the backend's world frame. MJCF supplies
+one geometry definition for collision, display and policy inputs. Hardware
+uses the measured ankle-to-seat distance and startup pose to place that chair
+in G1's odometry frame; this is manual localization, not perception. See
+[seat interaction](metatron_thor_g1_seat.md) for the exact frame contract.
+Clip tracking, style selection and Pico teleoperation remain unexposed.
 
 ## State and backend contracts
 

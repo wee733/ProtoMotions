@@ -80,6 +80,7 @@ MetatronTask::MetatronTask(FkEngine& fk, RestPose rest,
 void MetatronTask::reset() noexcept {
   height_recovery_.reset();
   if (recovery_) recovery_->reset();
+  if (seat_) seat_->reset();
   mode_ = Mode::kIdle;
   target_heading_ = 0.0F;
   velocity_world_ = {};
@@ -91,6 +92,7 @@ void MetatronTask::reset() noexcept {
 }
 
 void MetatronTask::set_idle() noexcept {
+  if (seat_ && seat_->active()) { seat_->stand(); return; }
   if (mode_ != Mode::kIdle) {
     mode_ = Mode::kIdle;
     support_ready_ = false;
@@ -99,8 +101,23 @@ void MetatronTask::set_idle() noexcept {
   velocity_world_ = {};
 }
 
+void MetatronTask::configure_seat(SeatGeometry geometry) {
+  seat_.emplace(std::move(geometry), rest_.upright_height);
+}
+
+void MetatronTask::set_sitting() {
+  if (!seat_) throw std::logic_error("sitting needs a configured seat");
+  if (seat_->active()) return;
+  seat_->sit();
+  mode_ = Mode::kSeat;
+  target_heading_ = seat_->heading();
+  velocity_world_ = {};
+  support_ready_ = false;
+}
+
 void MetatronTask::set_steering(float target_heading,
                              std::array<float, 2> velocity_world) {
+  if (seat_ && seat_->active()) { seat_->stand(); return; }
   if (!std::isfinite(target_heading) || !std::isfinite(velocity_world[0]) ||
       !std::isfinite(velocity_world[1]) ||
       std::hypot(velocity_world[0], velocity_world[1]) > 2.01F)
@@ -118,6 +135,25 @@ void MetatronTask::build(Inputs& inputs, const RobotState& state) {
   const RecoveryPose measured = fk_.run(reading);
   const float heading = yaw_of(reading.anchor_rot);
   copy_measured(inputs, measured);
+  if (mode_ == Mode::kSeat) {
+    // Reuse upstream stationary steering to align; the scene skill replaces
+    // its prompts once aligned. World goals must not pass through the local
+    // steering handrail below, which deliberately discards global positions.
+    steering_goals(inputs, reading, measured, heading);
+    goals_.apply(inputs, "steering", std::abs(wrap(target_heading_-heading)) <= kPi/9);
+    seat_->step(inputs, measured, 0.02F);
+    if (!seat_->active()) { mode_ = Mode::kIdle; support_ready_ = heading_ready_ = false; }
+    if (seat_->supported(measured)) {
+      height_recovery_.reset();
+      if (recovery_) recovery_->reset();
+    } else if (recovery_ ? recovery_->step(inputs, measured, 0.02F)
+                         : height_recovery_.step(inputs, measured)) {
+      seat_->reset();
+      mode_ = Mode::kIdle;
+      support_ready_ = false;
+    }
+    return;
+  }
   const float speed = std::hypot(velocity_world_[0], velocity_world_[1]);
   const bool standing = mode_ == Mode::kIdle ||
       (speed <= 0.03F && std::abs(wrap(target_heading_ - heading)) <= kPi / 9.0F);

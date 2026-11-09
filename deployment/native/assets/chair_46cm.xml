@@ -1,0 +1,14 @@
+<mujocoinclude>
+  <!-- Operator measurements: seat height/width 0.46 m, depth 0.48 m,
+       back 0.50 m above the seat. Back thickness 0.04 m is an approximation.
+       Simulation placement only: seat center 0.50 m behind the starting G1.
+       +X points out of the chair; update pose for measured hardware placement. -->
+  <body name="chair" pos="-0.50 0 0">
+    <geom name="chair_seat" type="box" size="0.24 0.23 0.23"
+          pos="0 0 0.23" rgba="0.24 0.38 0.55 1" friction="0.8 0.005 0.0001"
+          contype="1" conaffinity="1"/>
+    <geom name="chair_back" type="box" size="0.02 0.23 0.25"
+          pos="-0.26 0 0.71" rgba="0.24 0.38 0.55 1" friction="0.8 0.005 0.0001"
+          contype="1" conaffinity="1"/>
+  </body>
+</mujocoinclude>

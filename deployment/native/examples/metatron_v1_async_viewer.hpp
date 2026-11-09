@@ -20,15 +20,17 @@ namespace protomotions::deployment::metatron_v1 {
 // publishes a small measured-state snapshot, never waits for a GPU draw.
 class AsyncMujocoViewer final {
  public:
-  AsyncMujocoViewer(std::string xml, std::string glfw_library, bool hardware = false) {
+  AsyncMujocoViewer(std::string xml, std::string glfw_library, bool hardware = false,
+                   std::string seat_body = {}) {
     std::promise<void> initialized;
     auto ready = initialized.get_future();
     thread_ = std::thread([this, xml = std::move(xml),
                            glfw_library = std::move(glfw_library), hardware,
+                           seat_body = std::move(seat_body),
                            initialized = std::move(initialized)]() mutable {
           bool started = false;
           try {
-            MujocoViewer viewer(xml, glfw_library, hardware);
+            MujocoViewer viewer(xml, glfw_library, hardware, seat_body);
             initialized.set_value();
             started = true;
             while (!stop_.load(std::memory_order_relaxed)) {

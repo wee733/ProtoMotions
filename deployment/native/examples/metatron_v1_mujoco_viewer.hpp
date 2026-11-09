@@ -8,13 +8,16 @@
 #include <mujoco/mujoco.h>
 
 #include <chrono>
+#include <cmath>
 #include <cstdint>
 #include <iomanip>
+#include <optional>
 #include <sstream>
 #include <stdexcept>
 #include <string>
 
 #include "protomotions/deployment/types.hpp"
+#include "protomotions/deployment/metatron_v1_seat.hpp"
 
 struct GLFWwindow;
 struct GLFWmonitor;
@@ -23,16 +26,17 @@ namespace protomotions::deployment::metatron_v1 {
 
 struct ViewerStatus {
   LifecycleState lifecycle = LifecycleState::kStopped;
-  bool steering = false;
+  std::string mode = "IDLE";
   double command_ms = 0.0;
   std::uint64_t faults = 0;
   std::string reason;
+  std::optional<SeatGeometry> seat;
 };
 
 class MujocoViewer final {
  public:
   MujocoViewer(const std::string& xml, const std::string& glfw_library,
-               bool hardware = false) : hardware_(hardware) {
+               bool hardware = false, const std::string& seat_body = {}) : hardware_(hardware) {
     library_ = dlopen(glfw_library.c_str(), RTLD_NOW | RTLD_LOCAL);
     if (!library_) throw std::runtime_error("cannot load GLFW viewer library: " + glfw_library);
     try {
@@ -54,6 +58,11 @@ class MujocoViewer final {
       char error[1024]{};
       model_ = mj_loadXML(xml.c_str(), nullptr, error, sizeof(error));
       if (!model_) throw std::runtime_error(error[0] ? error : "MuJoCo viewer XML failed");
+      if (!seat_body.empty()) {
+        seat_body_ = mj_name2id(model_, mjOBJ_BODY, seat_body.c_str());
+        floor_geom_ = mj_name2id(model_, mjOBJ_GEOM, "floor");
+        if (seat_body_ < 0 || floor_geom_ < 0) throw std::runtime_error("viewer seat/floor missing");
+      }
       data_ = mj_makeData(model_);
       if (!data_) throw std::runtime_error("MuJoCo viewer data creation failed");
       mjv_defaultCamera(&camera_);
@@ -88,6 +97,14 @@ class MujocoViewer final {
       const int id = model_->actuator_trnid[2 * joint];
       data_->qpos[model_->jnt_qposadr[id]] = state.dof_position[joint];
     }
+    if (status.seat && seat_body_ >= 0) {
+      for (int axis = 0; axis < 3; ++axis)
+        model_->body_pos[3*seat_body_+axis] = status.seat->object_position[axis];
+      model_->body_quat[4*seat_body_] = std::cos(status.seat->yaw/2);
+      model_->body_quat[4*seat_body_+1] = model_->body_quat[4*seat_body_+2] = 0;
+      model_->body_quat[4*seat_body_+3] = std::sin(status.seat->yaw/2);
+      model_->geom_pos[3*floor_geom_+2] = status.seat->ground_z;
+    }
     mj_forward(model_, data_);
     current_(window_);
     int width = 0, height = 0;
@@ -101,7 +118,7 @@ class MujocoViewer final {
     const double age_ms = std::chrono::duration<double, std::milli>(
         std::chrono::steady_clock::now() - state.timestamp).count();
     const char* mode = status.lifecycle == LifecycleState::kActive
-        ? (status.steering ? "STEERING" : "IDLE")
+        ? status.mode.c_str()
         : status.lifecycle == LifecycleState::kFault ? "DAMPING / FAULT"
         : status.lifecycle == LifecycleState::kSafeIdle ? "DAMPING / READY" : "STOPPED";
     std::ostringstream text;
@@ -116,6 +133,7 @@ class MujocoViewer final {
       text << '\n' << status.reason;
     text << "\nG1 remote: Y activate / A steer / R1 idle / X damping"
          << "\nClose window or Ctrl+C: stop controller";
+    if (status.seat) text << "\nB sit / R1 stand then idle | chair pose supplied, not sensed";
     mjr_overlay(mjFONT_NORMAL, mjGRID_TOPLEFT, viewport, text.str().c_str(),
                 nullptr, &context_);
     swap_(window_);
@@ -154,6 +172,7 @@ class MujocoViewer final {
   GLFWwindow* window_ = nullptr;
   mjModel* model_ = nullptr;
   mjData* data_ = nullptr;
+  int seat_body_ = -1, floor_geom_ = -1;
   mjvCamera camera_{};
   mjvOption option_{};
   mjvScene scene_{};

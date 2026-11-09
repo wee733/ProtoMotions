@@ -10,6 +10,7 @@
 #include "protomotions/deployment/metatron_v1_goals.hpp"
 #include "protomotions/deployment/metatron_v1_recovery.hpp"
 #include "protomotions/deployment/metatron_v1_rest.hpp"
+#include "protomotions/deployment/metatron_v1_seat.hpp"
 #include "protomotions/deployment/types.hpp"
 
 namespace protomotions::deployment::metatron_v1 {
@@ -18,7 +19,7 @@ namespace protomotions::deployment::metatron_v1 {
 // same task object builds all 39 policy inputs from either backend's RobotState.
 class MetatronTask final {
  public:
-  enum class Mode { kIdle, kSteering };
+  enum class Mode { kIdle, kSteering, kSeat };
 
   // Empty recovery_plan selects the paper's public torso-height rule.
   // A supplied plan retains the upstream recorded-motion recovery behavior.
@@ -26,6 +27,11 @@ class MetatronTask final {
             const std::vector<std::string>& body_names);
   void reset() noexcept;
   void set_idle() noexcept;
+  void configure_seat(SeatGeometry geometry);
+  void set_sitting();
+  std::string_view seat_phase() const noexcept {
+    return seat_ ? seat_->phase_name() : "unconfigured";
+  }
   void set_steering(float target_heading,
                     std::array<float, 2> velocity_world);
   void build(Inputs& inputs, const RobotState& state);
@@ -45,6 +51,7 @@ class MetatronTask final {
   MetatronGoals goals_;
   HeightRecovery height_recovery_;
   std::optional<StagedRecovery> recovery_;
+  std::optional<SeatInteraction> seat_;
   Mode mode_ = Mode::kIdle;
   float target_heading_ = 0.0F;
   std::array<float, 2> velocity_world_{};

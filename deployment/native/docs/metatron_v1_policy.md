@@ -13,8 +13,8 @@ only the four control outputs. Runtime task goals use an FK engine compiled from
 graph traces, rebuilt from the config bundle beside the checkpoint, so the two
 graphs agree by construction. The native runtime runs it on the current
 measurement before every policy call, since its goal canvas starts from the
-measured pose. The native launcher supports idle, steering and
-recovery. It does not currently expose tracking clips, object interaction,
+measured pose. The native launcher supports idle, steering, recovery and the
+[fixed-seat adapter](metatron_thor_g1_seat.md). It does not currently expose tracking clips,
 style selection or Pico task control. Python modules provide offline reference
 and contract checks, not a second live launcher.
 

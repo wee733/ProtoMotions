@@ -47,6 +47,12 @@ Ruff 0.8.1 are installed there. MuJoCo is 3.17.0. G1 meshes, the seed motion,
 and the official demo zip were fetched through Git LFS. Preserve the model
 LICENSE, NOTICE, and model card beside the downloaded artifacts.
 
+This follows the upstream [installation guidance](../../../docs/source/getting_started/installation.rst),
+which supports conda/venv for MuJoCo; uv is another supported route, not a
+requirement for this C++ runtime. Retain the working environment and the
+upstream download, export, build and launch tools. Make targeted adaptations
+for observed integration problems instead of introducing a replacement runner.
+
 Build/run commands below use variables only to shorten paths:
 
 ```bash
@@ -102,22 +108,28 @@ level 0 measured 17.48 ms median / 21.38 ms P95; level 1 measured 3.44 / 5.58 ms
 
 ## Run and control
 
-The currently deployed process is a transient user service named
-`metatron-g1.service`. It is not enabled at boot. Inspect it with
-`systemctl --user status metatron-g1`; follow
-`/home/thor/lbz_ws/metatron/logs/g1-runtime.log`. Do not launch a second motor
-publisher while it is running. `systemctl --user stop metatron-g1` sends SIGTERM
-to the loop, which sends its final damping command and exits.
+Follow the upstream [native launch workflow](metatron_v1_native.md) and run
+the existing executable in a terminal in the foreground. The temporary
+`metatron-g1.service` used in the initial experiment has been stopped and
+removed. There is no systemd deployment, autostart, or added launcher script.
+The earlier hardware log is retained at `logs/g1-runtime.log` as test evidence.
 
-To start in a terminal after that service has stopped:
+With G1 connected, run the following command using the path variables defined
+above. Start only one hardware controller process:
 
 ```bash
-"$METATRON_ROOT/build/native/metatron_v1_deploy_cpp" \
+NVIDIA_TF32_OVERRIDE=0 "$METATRON_ROOT/build/native/metatron_v1_deploy_cpp" \
   --backend unitree --net-if enP2p1s0 --arm --unitree-remote \
   --engine "$METATRON_ARTIFACTS/model.graphsafe.opt1.fp32.plan" \
   --fk-engine "$METATRON_ARTIFACTS/fk.fp32.plan" \
   --manifest "$METATRON_ARTIFACTS/manifest.json" --cuda-graphs
 ```
+
+Watch status in the same terminal. **Ctrl+C** sends SIGINT to the foreground
+process; its existing signal handler ends the loop and executes `runtime.stop()`
+before exit. X selects damping without exiting. Each new invocation starts
+in damping and awaits Y. ROS launch/service/action integration is separate
+from process supervision and is not implemented by this command.
 
 Thor: `192.168.123.160/24`; G1: `192.168.123.164`; DDS interface: `enP2p1s0`.
 The upstream backend releases the high-level controller and starts in damping.
@@ -133,9 +145,26 @@ runtime's last accepted state, so Y can revive a faulted runtime.
 | R1 | Return to idle/standing |
 | X | Damping, with priority while held |
 
-For simulation, substitute `--backend mujoco --xml "$METATRON_ARTIFACTS/g1_sim.xml"
---scripted-sim --steps 1500` for the hardware/input flags. The fixture tests
-activation, repeated Y, steering, X stop, revival, sustained walking, and idle.
+The same foreground entry point runs the simulation fixture:
+
+```bash
+NVIDIA_TF32_OVERRIDE=0 "$METATRON_ROOT/build/native/metatron_v1_deploy_cpp" \
+  --backend mujoco --xml "$METATRON_ARTIFACTS/g1_sim.xml" \
+  --scripted-sim --steps 1500 \
+  --engine "$METATRON_ARTIFACTS/model.graphsafe.opt1.fp32.plan" \
+  --fk-engine "$METATRON_ARTIFACTS/fk.fp32.plan" \
+  --manifest "$METATRON_ARTIFACTS/manifest.json" --cuda-graphs
+```
+
+The fixture tests activation, repeated Y, steering, X stop, revival, sustained
+walking, and idle. Ctrl+C also ends a foreground simulation through its normal
+stop path.
+
+The foreground workflow was checked in a PTY: 1548 cycles, 1528 policy commands,
+zero runtime faults, followed by a real Ctrl+C and exit code 0. The removed
+service was confirmed absent, with no remaining controller process. See
+`logs/native-foreground.log`. G1's Ethernet interface was down during this
+change, so hardware control was not restarted.
 
 ## Evidence and remaining work
 

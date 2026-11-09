@@ -105,10 +105,14 @@ viewer or Ctrl+C executes the existing stop path. No systemd unit is used.
   1490 commands, zero runtime faults and zero state-to-command times over 20 ms.
   The second run measured mean 4.07008 ms and max 9.28661 ms. These fixed-fixture
   results are not a success rate over chair shapes or initial poses.
-- Physical controller is connected with the reported 0.28 m placement. Logs
+- Physical controller was run with the reported 0.28 m placement. Logs
   received multiple B/R1 cycles and seated transitions. Several attempts did
   not reach the seated pose criterion; one entered height recovery and then
   returned upright. No runtime fault was recorded in this observation window.
   The operator subsequently confirmed **physical sitting and standing both
   work normally**. This validates this chair/placement, not every recorded
   attempt or a general success rate. See `logs/g1-seat-runtime.log`.
+
+The foreground terminal session subsequently ended (terminal status 130).
+No Metatron controller remains running. The piped log has no final summary,
+so this session is not evidence of the normal shutdown path.

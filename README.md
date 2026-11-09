@@ -16,6 +16,25 @@
 
 ---
 
+## Thor / G1 deployment — `thor/metatron-v1` branch
+
+本分支使用上游原生 C++ 入口 `metatron_v1_deploy_cpp`，在 Thor 上执行
+TensorRT 推理，通过 Unitree SDK2/DDS 控制 G1，直接在终端前台运行。
+**当前没有 `roslaunch` / `ros2 launch` 或 ROS service/action 接口，也不使用 systemd。**
+
+模型权重和底层 runtime 来自官方；本分支增加 Thor 兼容、G1 自带遥控器、
+真机姿态可视化，以及基于官方网页目标规则的座椅适配。
+上游将 native runtime 标为[实验实现](deployment/README.md)。
+
+- [站立/行走、编译与启动](deployment/native/docs/metatron_thor_g1.md)
+- [坐下/起立、座椅几何与摆放标定](deployment/native/docs/metatron_thor_g1_seat.md)
+
+2026-11-09：用户已实机确认站立、行走、坐下、起立和姿态同步正常；
+18/18 原生测试通过。PICO 暂缓，动作跟踪等其余技能尚未完成，未宣称论文全部复现。
+下文保留上游项目说明。
+
+---
+
 ## 📰 News
 
 - **Oct 28, 2026: Metatron is released.** Metatron is our generative whole-body policy for the Unitree G1: one network that handles motion tracking, steering, path following, reaching for sparse body goals, scene interaction and getting back up after a fall. Read the [**paper**](https://research.nvidia.com/labs/par/projects/metatron/assets/metatron-paper.pdf?v=de2411a21822) and the [**project page**](https://research.nvidia.com/labs/par/projects/metatron/), try it in your browser with the [**interactive demo**](https://nvlabs.github.io/ProtoMotions/demos/metatron/), race six of them in [**G1 Racer**](https://nvlabs.github.io/ProtoMotions/demos/g1-racer/), download the weights and the native package from [**Hugging Face**](https://huggingface.co/nvidia/Metatron-v1) with `python scripts/download_metatron.py`, or train your own with the [**Metatron G1 student guide**](https://nvlabs.github.io/ProtoMotions/user_guide/metatron_student.html).

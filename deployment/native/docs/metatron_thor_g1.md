@@ -108,6 +108,13 @@ level 0 measured 17.48 ms median / 21.38 ms P95; level 1 measured 3.44 / 5.58 ms
 
 ## Run and control
 
+**Current interface:** the upstream native C++ executable, adapted on this
+branch, using Unitree SDK2/DDS directly. There is no `roslaunch`, `ros2 launch`,
+ROS node/service/action integration. Upstream classifies this runtime as
+[experimental prototyping](../../README.md); the G1 remote, measured-state
+viewer and fixed-seat integration are branch adaptations, not an unmodified
+official hardware application.
+
 Follow the upstream [native launch workflow](metatron_v1_native.md) and run
 the existing executable in a terminal in the foreground. The temporary
 `metatron-g1.service` used in the initial experiment has been stopped and

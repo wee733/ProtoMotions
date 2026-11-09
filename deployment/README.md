@@ -73,6 +73,11 @@ exporter and helpers at this directory's top level remain in place.
 
 ## Start here
 
+- On the `thor/metatron-v1` branch, use the [Thor/G1 foreground commands](native/docs/metatron_thor_g1.md)
+  and [fixed-seat adapter](native/docs/metatron_thor_g1_seat.md). These run the
+  adapted upstream C++ executable with Unitree SDK2/DDS, without ROS launch,
+  ROS services/actions or systemd. The G1 remote, live hardware viewer and seat
+  integration are branch adaptations; the pretrained weights are unchanged.
 - Build and test the core using the commands below; no robot or GPU is needed.
 - For the current 39-input Metatron v1 policy, read
   [policy preparation](native/docs/metatron_v1_policy.md) and
@@ -97,7 +102,7 @@ and Y for revive into idle; see its guide for the complete control mapping.
 | Core runtime | C++ runtime, safety supervisor, controller manager, C ABI | Backend-neutral; vendor SDKs and inference libraries are optional |
 | MuJoCo | Native backend and asynchronous viewer | Simulation, smoke tests and sensor/action contract validation |
 | Unitree G1 | Optional SDK2 backend and G1 launchers | 29 body DOFs; requires SDK2/CycloneDDS and operator qualification |
-| Metatron v1 | Dedicated native TensorRT policy engine + FK engine built from the policy's exported `fk.onnx` | Exact 39-input G1 contract; launcher exposes idle, steering and recovery |
+| Metatron v1 | Dedicated native TensorRT policy engine + FK engine built from the policy's exported `fk.onnx` | Exact 39-input G1 contract; idle, steering and recovery, plus the fixed-seat adapter on `thor/metatron-v1` |
 | GPC unconditional prior | Python adapter, fixed-shape TensorRT runner and benchmark | Specific 29-DOF, 64-observation, eight-token contract; argmax, Gumbel-max and exact top-p |
 | Operator input | Linux evdev Xbox, optional SDL2 and Pico/XRoboToolkit interfaces | Availability and bindings depend on the launcher; Pico SDK is external |
 

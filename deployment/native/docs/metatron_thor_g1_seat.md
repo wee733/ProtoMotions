@@ -109,5 +109,6 @@ viewer or Ctrl+C executes the existing stop path. No systemd unit is used.
   received multiple B/R1 cycles and seated transitions. Several attempts did
   not reach the seated pose criterion; one entered height recovery and then
   returned upright. No runtime fault was recorded in this observation window.
-  These logs do not establish successful physical seating. Operator feedback
-  and placement alignment remain necessary. See `logs/g1-seat-runtime.log`.
+  The operator subsequently confirmed **physical sitting and standing both
+  work normally**. This validates this chair/placement, not every recorded
+  attempt or a general success rate. See `logs/g1-seat-runtime.log`.

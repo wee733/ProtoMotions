@@ -199,6 +199,7 @@ viewer does not make the browser's IK/scene controls command the physical G1.
 | Native 30-second walk/stop simulation | 1480 policy commands, zero faults, zero state-to-command times above 20 ms; mean 3.48 ms, max 9.68 ms; ~2.4 m travel, stable stop |
 | Physical G1 | Operator confirmed Y standing and A/joystick walking; runtime logged both transitions and active command transmission. R1 remains available; its use was not observed in this run |
 | Live G1 viewer | Operator confirmed measured posture synchronization, standing and walking; viewer-enabled simulation sent 380 commands with zero runtime faults |
+| Fixed chair, sit/stand | Two 30-second simulations passed; operator confirmed physical sitting and standing normal with measured chair geometry and approximately 0.28 m ankle-to-front placement |
 | Prone height-only recovery | Failed to stand in 30 s at 500 Hz; 20 s checks at 1000 Hz Euler and 200 Hz implicitfast also stayed low |
 
 The numerical fixture generator is
@@ -217,8 +218,8 @@ establish a 20 ms worst-case deadline under concurrent model serving. The
 standalone benchmark and the zero-overrun simulation table above must not be
 used to claim otherwise. The unrelated serving process was left unchanged.
 
-The fixed-seat adapter has passed the measured-chair simulation and is under
-physical evaluation. General object interaction, motion tracking, style
+The fixed-seat adapter passed the measured-chair simulation and the operator
+confirmed physical sitting and standing. General object interaction, motion tracking, style
 selection and PICO control remain outside this launcher's exposed modes.
 Neither standing/walking nor these unit tests establish reproduction of every
 paper skill. The failed prone fixture remains open and must not be presented

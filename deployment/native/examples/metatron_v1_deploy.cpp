@@ -31,6 +31,7 @@
 #include "protomotions/deployment/mujoco_backend.hpp"
 #include "protomotions/deployment/runtime.hpp"
 #include "protomotions/deployment/unitree_dds_config.hpp"
+#include "protomotions/deployment/unitree_input.hpp"
 #include "protomotions/deployment/unitree_sdk2_backend.hpp"
 
 namespace {
@@ -48,6 +49,7 @@ struct Options {
   bool cuda_graph = false;
   bool viewer = false;
   bool scripted_sim = false;
+  bool unitree_remote = false;
   int steps = 0;
   int dds_participant_index = 0;
 };
@@ -60,6 +62,7 @@ Options parse(int argc, char** argv) {
     else if (flag == "--cuda-graphs") args.cuda_graph = true;
     else if (flag == "--viewer") args.viewer = true;
     else if (flag == "--scripted-sim") args.scripted_sim = true;
+    else if (flag == "--unitree-remote") args.unitree_remote = true;
     else {
       if (index + 1 >= argc) throw std::invalid_argument("missing value for " + flag);
       const std::string value(argv[++index]);
@@ -81,9 +84,13 @@ Options parse(int argc, char** argv) {
   if ((args.backend != "mujoco" && args.backend != "unitree") ||
       (args.backend == "mujoco" && args.xml.empty()) ||
       args.engine.empty() || args.fk_engine.empty() ||
-      args.manifest.empty() || args.recovery_plan.empty() ||
-      args.xbox_device.empty() || args.steps < 0)
-    throw std::invalid_argument("required: --backend mujoco|unitree --engine --fk-engine --manifest --recovery-plan --xbox-device; MuJoCo also requires --xml");
+      args.manifest.empty() || args.steps < 0)
+    throw std::invalid_argument("required: --backend mujoco|unitree --engine --fk-engine --manifest; MuJoCo also requires --xml");
+  if (static_cast<int>(args.scripted_sim) + static_cast<int>(args.unitree_remote) +
+          static_cast<int>(!args.xbox_device.empty()) != 1)
+    throw std::invalid_argument("select one input: --unitree-remote, --xbox-device PATH or --scripted-sim");
+  if (args.unitree_remote && args.backend != "unitree")
+    throw std::invalid_argument("--unitree-remote requires --backend unitree");
   if (args.backend == "unitree" &&
       (!args.arm || args.net_if.empty() || if_nametoindex(args.net_if.c_str()) == 0))
     throw std::invalid_argument("hardware requires --arm and an existing --net-if");
@@ -158,7 +165,10 @@ int main(int argc, char** argv) {
     RestPose rest = make_rest_pose(fk);
     MetatronTask task(fk, rest, args.recovery_plan, body_names);
     engine.warmup(10);
-    EvdevXboxInputSource xbox(args.xbox_device);
+    std::unique_ptr<EvdevXboxInputSource> xbox;
+    UnitreeControllerInputSource remote;
+    if (!args.xbox_device.empty())
+      xbox = std::make_unique<EvdevXboxInputSource>(args.xbox_device);
     std::unique_ptr<AsyncMujocoViewer> viewer;
     if (args.viewer)
       viewer = std::make_unique<AsyncMujocoViewer>(args.xml, args.glfw_library);
@@ -220,12 +230,18 @@ int main(int argc, char** argv) {
     std::signal(SIGINT, signal_stop);
     std::signal(SIGTERM, signal_stop);
     std::cout << "Metatron v1 ready; X=damping, Y=revive idle, A=steering, RB=idle. "
-                 "Starts in safe hold. backend=" << args.backend << "\n";
+                 "Starts in safe hold. backend=" << args.backend
+              << " input=" << (args.unitree_remote ? "G1 remote (RB=R1)" :
+                               args.scripted_sim ? "scripted simulation" : "Xbox")
+              << " recovery=" << (args.recovery_plan.empty() ? "paper torso-height" : "recorded plan")
+              << "\n";
     std::uint32_t previous = 0;
     bool active = false, steering = false;
     float heading_goal = 0.0F;
     auto next = Clock::now();
     int count = 0;
+    std::uint64_t sent = 0, slow = 0, cycle_faults = 0;
+    double total_command_ms = 0.0, max_command_ms = 0.0;
     while (!g_stop && (args.steps == 0 || count < args.steps)) {
       next += std::chrono::milliseconds(20);
       InputState input;
@@ -234,13 +250,21 @@ int main(int argc, char** argv) {
         input.connected = true;
         input.timestamp = Clock::now();
         input.buttons = count == 10 ? xbox_button::kY :
-                        count == 40 ? xbox_button::kA :
+                        count == 40 || count == 200 ? xbox_button::kA :
                         count == 60 || count == 130 || count == 140 ? xbox_button::kY :
-                        count == 100 ? xbox_button::kRightBumper :
+                        count == 100 || count == 800 ? xbox_button::kRightBumper :
                         count == 120 ? xbox_button::kX : 0;
-        input.axes[3] = count >= 41 && count < 100 ? 0.3F : 0.0F;
+        input.axes[3] = (count >= 41 && count < 100) ||
+                               (count >= 201 && count < 700) ? 0.3F : 0.0F;
         input_ready = true;
-      } else input_ready = xbox.poll(input);
+      } else if (args.unitree_remote) {
+        // Poll transport independently: a faulted runtime stops advancing its
+        // last_state, but the operator must still be able to request revival.
+        RobotState state;
+        if (unitree_backend->read_state(state) && state.has_operator_input)
+          remote.update(state.operator_input_data, state.sequence, state.timestamp);
+        input_ready = remote.poll(input);
+      } else input_ready = xbox->poll(input);
       if (!input_ready ||
           Clock::now() - input.timestamp > std::chrono::milliseconds(250)) {
         runtime.emergency_stop();
@@ -298,8 +322,18 @@ int main(int argc, char** argv) {
         }
       }
       const auto result = runtime.run_cycle(Clock::now());
+      double command_ms = 0.0;
+      if (result == CycleResult::kSent && runtime.last_cycle_timing().valid()) {
+        command_ms = std::chrono::duration<double, std::milli>(
+            runtime.last_cycle_timing().state_to_command()).count();
+        ++sent;
+        slow += command_ms > 20.0;
+        total_command_ms += command_ms;
+        max_command_ms = std::max(max_command_ms, command_ms);
+      }
       if (result == CycleResult::kSafetyFault || result == CycleResult::kBackendFault ||
           result == CycleResult::kNoState) {
+        ++cycle_faults;
         active = false;
         std::cerr << "safe fault: " << runtime.last_fault_reason() << '\n';
         if (unitree_backend && result == CycleResult::kNoState) {
@@ -311,11 +345,15 @@ int main(int argc, char** argv) {
                     << " age_ms=" << s.odometry_age_ms << '\n';
         }
       }
-      if (args.scripted_sim && count % 25 == 0) {
+      if (count % 50 == 0) {
         const auto& state = runtime.last_state();
-        std::cout << "sim cycle=" << count << " result=" << static_cast<int>(result)
+        std::cout << "cycle=" << count << " result=" << static_cast<int>(result)
+                  << " active=" << active << " steering=" << steering
+                  << " root_xy=" << state.root_position[0] << ',' << state.root_position[1]
                   << " root_z=" << state.root_position[2]
-                  << " recovery=" << static_cast<int>(task.recovery_phase()) << '\n';
+                  << " recovery=" << static_cast<int>(task.recovery_phase())
+                  << " command_ms=" << command_ms
+                  << " buttons=" << input.buttons << std::endl;
       }
       if (viewer) {
         viewer->publish(runtime.last_state());
@@ -325,6 +363,10 @@ int main(int argc, char** argv) {
       std::this_thread::sleep_until(next);
     }
     if (!runtime.stop()) std::cerr << "warning: final safe hold was not confirmed\n";
+    std::cout << "summary cycles=" << count << " sent=" << sent
+              << " faults=" << cycle_faults << " command_over_20ms=" << slow
+              << " command_mean_ms=" << (sent ? total_command_ms / sent : 0.0)
+              << " command_max_ms=" << max_command_ms << std::endl;
     return 0;
   } catch (const std::exception& error) {
     std::cerr << "Metatron native launch failed: " << error.what() << '\n';

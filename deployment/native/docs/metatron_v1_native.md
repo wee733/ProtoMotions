@@ -1,5 +1,9 @@
 # Metatron v1 native deployment
 
+For the tested Jetson Thor / TensorRT 10.16 / G1 wireless remote configuration,
+see [Thor and G1 deployment](metatron_thor_g1.md). The measurements below retain
+the original upstream machine and staged-recovery qualification context.
+
 The native launcher consumes the pinned `protomotions.masked_mimic.g1.v5_raw_context_scene` 39-input contract. It uses one C++ `MetatronTask`, history boundary, TensorRT policy, and TensorRT FK engine for both MuJoCo and Unitree. Only the `RobotBackend` changes. The ONNX graph already contains the actuator offset and scale: the launcher sends its applied action directly and converts it back to raw action only for accepted-command history. It does not add the offset twice.
 
 The pinned launcher bundle is
@@ -93,4 +97,10 @@ parity feeds (max applied-action error 0.00121 rad), all 19 CTests, and a
 155-cycle scripted MuJoCo idle/steering/safety run. These are not live-robot
 end-to-end latency or physical-safety qualifications.
 
-The optional simulator fixture command `--scripted-sim --steps N` is prohibited for Unitree by the launcher. It starts with ten damping cycles, drives Y at cycle 10, A at 40, repeats Y at 60, selects idle with RB at 100, damps with X at 120, revives with Y at 130, and repeats Y at 140. It is intended solely for repeatable MuJoCo control-loop checks.
+The optional simulator fixture command `--scripted-sim --steps N` is prohibited for Unitree by the launcher. It starts with ten damping cycles, drives Y at cycle 10, A at 40, repeats Y at 60, selects idle with RB at 100, damps with X at 120, revives with Y at 130, and repeats Y at 140. It enters steering again at 200, commands forward motion through cycle 699, and selects idle at 800. It is intended solely for repeatable MuJoCo control-loop checks.
+
+Select exactly one input source: `--xbox-device PATH`, `--unitree-remote`
+(Unitree only), or `--scripted-sim` (MuJoCo only). G1 R1 maps to RB; X/Y/A and
+the sticks retain the mapping above. `--recovery-plan PATH` is now optional:
+omitting it selects the paper's torso-height-only rule, without a recorded clip.
+The staged-recovery results above do not qualify this different prompt mode.

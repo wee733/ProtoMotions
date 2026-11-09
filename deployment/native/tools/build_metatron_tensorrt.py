@@ -75,6 +75,8 @@ def main() -> None:
         flush=True,
     )
     config = builder.create_builder_config()
+    # FP32 reference qualification must not silently use TF32 matrix products.
+    config.clear_flag(trt.BuilderFlag.TF32)
     config.builder_optimization_level = args.optimization_level
     config.set_memory_pool_limit(
         trt.MemoryPoolType.WORKSPACE, args.workspace_gib * (1 << 30)

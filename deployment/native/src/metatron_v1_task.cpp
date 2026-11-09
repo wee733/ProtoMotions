@@ -73,10 +73,13 @@ MetatronTask::MetatronTask(FkEngine& fk, RestPose rest,
                      const std::vector<std::string>& body_names)
     : fk_(fk), rest_(std::move(rest)),
       goals_(rest_.positions, rest_.rotations, rest_.style),
-      recovery_(recovery_plan, body_names) {}
+      height_recovery_(rest_.upright_height) {
+  if (!recovery_plan.empty()) recovery_.emplace(recovery_plan, body_names);
+}
 
 void MetatronTask::reset() noexcept {
-  recovery_.reset();
+  height_recovery_.reset();
+  if (recovery_) recovery_->reset();
   mode_ = Mode::kIdle;
   target_heading_ = 0.0F;
   velocity_world_ = {};
@@ -133,7 +136,8 @@ void MetatronTask::build(Inputs& inputs, const RobotState& state) {
     steering_goals(inputs, reading, measured, heading);
   }
   goals_.apply(inputs, mode_ == Mode::kIdle ? "idle" : "steering", standing);
-  if (recovery_.step(inputs, measured, 0.02F)) {
+  if (recovery_ ? recovery_->step(inputs, measured, 0.02F)
+                : height_recovery_.step(inputs, measured)) {
     support_ready_ = false;
   }
 }

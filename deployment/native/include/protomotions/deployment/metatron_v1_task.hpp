@@ -3,6 +3,7 @@
 #pragma once
 
 #include <array>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -19,6 +20,8 @@ class MetatronTask final {
  public:
   enum class Mode { kIdle, kSteering };
 
+  // Empty recovery_plan selects the paper's public torso-height rule.
+  // A supplied plan retains the upstream recorded-motion recovery behavior.
   MetatronTask(FkEngine& fk, RestPose rest, const std::string& recovery_plan,
             const std::vector<std::string>& body_names);
   void reset() noexcept;
@@ -27,7 +30,11 @@ class MetatronTask final {
                     std::array<float, 2> velocity_world);
   void build(Inputs& inputs, const RobotState& state);
   Mode mode() const noexcept { return mode_; }
-  StagedRecovery::Phase recovery_phase() const noexcept { return recovery_.phase(); }
+  StagedRecovery::Phase recovery_phase() const noexcept {
+    if (recovery_) return recovery_->phase();
+    return height_recovery_.active() ? StagedRecovery::Phase::kRamp
+                                     : StagedRecovery::Phase::kInactive;
+  }
 
  private:
   void steering_goals(Inputs& inputs, const SensorReading& reading,
@@ -36,7 +43,8 @@ class MetatronTask final {
   FkEngine& fk_;
   RestPose rest_;
   MetatronGoals goals_;
-  StagedRecovery recovery_;
+  HeightRecovery height_recovery_;
+  std::optional<StagedRecovery> recovery_;
   Mode mode_ = Mode::kIdle;
   float target_heading_ = 0.0F;
   std::array<float, 2> velocity_world_{};

@@ -17,6 +17,21 @@ struct RecoveryPose {
   std::array<float, 29> joints{};
 };
 
+// Paper, appendix G(c): torso-height-only goals with 0.65/0.90 hysteresis.
+// This public rule needs no motion recording. Height is relative to the lowest
+// FK body origin; timing requests a rise at 0.8 m/s, not a velocity command.
+class HeightRecovery final {
+ public:
+  explicit HeightRecovery(float upright_height);
+  void reset() noexcept { active_ = false; }
+  bool step(Inputs& inputs, const RecoveryPose& pose);
+  bool active() const noexcept { return active_; }
+
+ private:
+  float upright_height_;
+  bool active_ = false;
+};
+
 class StagedRecovery final {
  public:
   enum class Phase { kInactive, kPronePlan, kSeatedPlan, kRamp, kSettle };

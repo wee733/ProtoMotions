@@ -19,8 +19,8 @@
 
 namespace protomotions::deployment::metatron_v1 {
 namespace {
-static_assert(NV_TENSORRT_MAJOR == 10 && NV_TENSORRT_MINOR == 9,
-              "Metatron FK plans require TensorRT 10.9 headers");
+static_assert(NV_TENSORRT_MAJOR == 10 && NV_TENSORRT_MINOR >= 9,
+              "Metatron FK requires TensorRT 10.9 or newer in the 10.x series");
 void check_tensorrt_version() {
   if (getInferLibVersion() != NV_TENSORRT_VERSION)
     throw std::runtime_error("TensorRT headers and linked runtime differ");

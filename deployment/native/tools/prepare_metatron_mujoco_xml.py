@@ -32,7 +32,7 @@ def main() -> None:
             if pelvis is None:
                 raise ValueError("prepared G1 XML has no pelvis root body")
             pelvis.set("pos", "0 0 0.25")
-            pelvis.set("quat", "0 0 1 0")
+            pelvis.set("quat", "0.7071067811865476 0 0.7071067811865476 0")
             tree.write(args.output, encoding="unicode", xml_declaration=True)
         else:
             shutil.copyfile(prepared, args.output)

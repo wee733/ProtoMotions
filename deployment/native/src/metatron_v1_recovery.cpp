@@ -54,6 +54,40 @@ float height_from_positions(const std::vector<float>& values, std::size_t slot) 
 }
 }  // namespace
 
+HeightRecovery::HeightRecovery(float upright_height)
+    : upright_height_(upright_height) {
+  if (!std::isfinite(upright_height) || upright_height <= 0.0F)
+    throw std::invalid_argument("upright height must be positive and finite");
+}
+
+bool HeightRecovery::step(Inputs& inputs, const RecoveryPose& pose) {
+  float floor = std::numeric_limits<float>::infinity();
+  for (std::size_t body = 0; body < 33; ++body)
+    floor = std::min(floor, pose.positions[body * 3 + 2]);
+  const float height = pose.positions[16 * 3 + 2] - floor;
+  active_ = (active_ || height < 0.65F * upright_height_) &&
+            height < 0.90F * upright_height_;
+  if (!active_) return false;
+
+  // Recovery owns the prompt: hide world goals, rotations, style, velocity and
+  // scene cues while preserving the measured state and incoming-action history.
+  for (std::size_t index = 0; index < kInputCount; ++index)
+    if (kInputs[index].is_bool)
+      std::fill(inputs.booleans(index).begin(), inputs.booleans(index).end(), 0);
+  const float first = std::clamp((upright_height_ - height) / 0.8F, 0.25F, 1.25F);
+  for (std::size_t slot = 0; slot < 5; ++slot) {
+    std::copy(pose.positions.begin(), pose.positions.end(),
+              inputs.floats(5).begin() + slot * 33 * 3);
+    std::copy(pose.rotations.begin(), pose.rotations.end(),
+              inputs.floats(6).begin() + slot * 33 * 4);
+    inputs.floats(5)[(slot * 33 + 16) * 3 + 2] = floor + upright_height_;
+    inputs.booleans(7)[slot * 10] = 1;  // torso translation in local goal frame
+    inputs.booleans(8)[slot] = 1;
+    inputs.floats(9)[slot] = std::min(first + 0.25F * slot, 2.0F);
+  }
+  return true;
+}
+
 StagedRecovery::StagedRecovery(
     const std::string& plan_path,
     const std::vector<std::string>& policy_body_names) {

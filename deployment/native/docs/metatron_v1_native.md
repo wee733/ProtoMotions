@@ -57,7 +57,15 @@ The preparation installs position actuators and a floor, as the simulator requir
   --cuda-graphs --viewer --glfw-lib /path/to/libglfw.so
 ```
 
-The same binary takes `--backend unitree --net-if YOUR_VERIFIED_INTERFACE --arm`, omitting `--xml`, `--viewer`, and `--glfw-lib`. The FK plan already contains the robot kinematics, so an MJCF path is not used on hardware. It requires an explicit `--arm` but still starts in damping hold. Physical G1 operation is **not yet qualified** by the local tests; perform operator-supervised checks of sensor freshness, odometry, safety stop, and stance before reviving it. Do not run it merely because the simulator passes.
+The same binary takes `--backend unitree --net-if YOUR_VERIFIED_INTERFACE --arm`.
+For terminal-only operation, omit `--xml`, `--viewer`, and `--glfw-lib`; the FK
+plan contains the policy kinematics. To visualize measured hardware state, retain
+those three options. The window is labeled **Metatron - LIVE G1** and performs
+forward kinematics for rendering without stepping simulation. Its overlay shows
+mode, state age and faults; closing it stops the controller. Both backends start
+in damping hold. Current Thor/G1 hardware results and commands are recorded in
+[the platform guide](metatron_thor_g1.md); the historical qualification below
+is separate from those results.
 
 Before hardware launch, run the subscriber-only preflight. It does not release MotionSwitcher or create motor publishers, and does not require `--arm`:
 

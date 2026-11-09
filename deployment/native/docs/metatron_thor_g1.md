@@ -122,10 +122,20 @@ NVIDIA_TF32_OVERRIDE=0 "$METATRON_ROOT/build/native/metatron_v1_deploy_cpp" \
   --backend unitree --net-if enP2p1s0 --arm --unitree-remote \
   --engine "$METATRON_ARTIFACTS/model.graphsafe.opt1.fp32.plan" \
   --fk-engine "$METATRON_ARTIFACTS/fk.fp32.plan" \
-  --manifest "$METATRON_ARTIFACTS/manifest.json" --cuda-graphs
+  --manifest "$METATRON_ARTIFACTS/manifest.json" --cuda-graphs \
+  --viewer --xml "$METATRON_ARTIFACTS/g1_sim.xml" \
+  --glfw-lib /lib/aarch64-linux-gnu/libglfw.so.3
 ```
 
-Watch status in the same terminal. **Ctrl+C** sends SIGINT to the foreground
+The optional `--viewer` opens **Metatron - LIVE G1**. It reconstructs the
+measured joint pose and odometry using the existing MuJoCo renderer; it does
+not simulate the hardware or supply policy state. The overlay reports mode,
+measurement age, command timing and faults, and marks stale measurements.
+Rendering owns a separate GL/MuJoCo thread; initialization must succeed before
+the actuator backend is created. Omit the last two lines for terminal-only use.
+
+Watch status in the same terminal. Closing the viewer stops the controller.
+**Ctrl+C** sends SIGINT to the foreground
 process; its existing signal handler ends the loop and executes `runtime.stop()`
 before exit. X selects damping without exiting. Each new invocation starts
 in damping and awaits Y. ROS launch/service/action integration is separate
@@ -163,8 +173,14 @@ stop path.
 The foreground workflow was checked in a PTY: 1548 cycles, 1528 policy commands,
 zero runtime faults, followed by a real Ctrl+C and exit code 0. The removed
 service was confirmed absent, with no remaining controller process. See
-`logs/native-foreground.log`. G1's Ethernet interface was down during this
-change, so hardware control was not restarted.
+`logs/native-foreground.log`. G1 was later reconnected for the live viewer
+check: the operator confirmed synchronized posture, standing and walking.
+See `logs/g1-live-viewer.log`; this foreground session subsequently exited.
+
+The [official browser demo](https://nvlabs.github.io/ProtoMotions/user_guide/browser_demo.html)
+is a separate simulation interface. Upstream distributes its compiled static
+bundle, not the TypeScript project or a hardware bridge. The native live
+viewer does not make the browser's IK/scene controls command the physical G1.
 
 ## Evidence and remaining work
 
@@ -178,6 +194,7 @@ change, so hardware control was not restarted.
 | Policy-only benchmark, 500 calls | P50 3.44 ms, P95 5.58 ms, max 7.62 ms |
 | Native 30-second walk/stop simulation | 1480 policy commands, zero faults, zero state-to-command times above 20 ms; mean 3.48 ms, max 9.68 ms; ~2.4 m travel, stable stop |
 | Physical G1 | Operator confirmed Y standing and A/joystick walking; runtime logged both transitions and active command transmission. R1 remains available; its use was not observed in this run |
+| Live G1 viewer | Operator confirmed measured posture synchronization, standing and walking; viewer-enabled simulation sent 380 commands with zero runtime faults |
 | Prone height-only recovery | Failed to stand in 30 s at 500 Hz; 20 s checks at 1000 Hz Euler and 200 Hz implicitfast also stayed low |
 
 The numerical fixture generator is

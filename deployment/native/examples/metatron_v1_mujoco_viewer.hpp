@@ -2,11 +2,15 @@
 // SPDX-License-Identifier: Apache-2.0
 #pragma once
 
-// Optional visualizer for the native MuJoCo control loop. It mirrors the
+// Optional visualizer for the native control loop. It mirrors the
 // backend's measured state and never provides policy observations or actions.
 #include <dlfcn.h>
 #include <mujoco/mujoco.h>
 
+#include <chrono>
+#include <cstdint>
+#include <iomanip>
+#include <sstream>
 #include <stdexcept>
 #include <string>
 
@@ -17,9 +21,18 @@ struct GLFWmonitor;
 
 namespace protomotions::deployment::metatron_v1 {
 
+struct ViewerStatus {
+  LifecycleState lifecycle = LifecycleState::kStopped;
+  bool steering = false;
+  double command_ms = 0.0;
+  std::uint64_t faults = 0;
+  std::string reason;
+};
+
 class MujocoViewer final {
  public:
-  MujocoViewer(const std::string& xml, const std::string& glfw_library) {
+  MujocoViewer(const std::string& xml, const std::string& glfw_library,
+               bool hardware = false) : hardware_(hardware) {
     library_ = dlopen(glfw_library.c_str(), RTLD_NOW | RTLD_LOCAL);
     if (!library_) throw std::runtime_error("cannot load GLFW viewer library: " + glfw_library);
     try {
@@ -34,7 +47,8 @@ class MujocoViewer final {
       size_ = load<void (*)(GLFWwindow*, int*, int*)>("glfwGetFramebufferSize");
       if (!init_()) throw std::runtime_error("GLFW initialization failed; check DISPLAY");
       initialized_ = true;
-      window_ = create_(960, 720, "Metatron native MuJoCo", nullptr, nullptr);
+      window_ = create_(960, 720, hardware_ ? "Metatron - LIVE G1" :
+                                           "Metatron - MuJoCo simulation", nullptr, nullptr);
       if (!window_) throw std::runtime_error("GLFW window creation failed");
       current_(window_);
       char error[1024]{};
@@ -61,7 +75,7 @@ class MujocoViewer final {
   MujocoViewer(const MujocoViewer&) = delete;
   MujocoViewer& operator=(const MujocoViewer&) = delete;
 
-  bool render(const RobotState& state) {
+  bool render(const RobotState& state, const ViewerStatus& status) {
     if (should_close_(window_)) return false;
     if (state.dof_position.size() != static_cast<std::size_t>(model_->nu))
       throw std::runtime_error("viewer state DOF dimension mismatch");
@@ -84,6 +98,26 @@ class MujocoViewer final {
     mjv_updateScene(model_, data_, &option_, nullptr, &camera_, mjCAT_ALL, &scene_);
     mjrRect viewport{0, 0, width, height};
     mjr_render(viewport, &scene_, &context_);
+    const double age_ms = std::chrono::duration<double, std::milli>(
+        std::chrono::steady_clock::now() - state.timestamp).count();
+    const char* mode = status.lifecycle == LifecycleState::kActive
+        ? (status.steering ? "STEERING" : "IDLE")
+        : status.lifecycle == LifecycleState::kFault ? "DAMPING / FAULT"
+        : status.lifecycle == LifecycleState::kSafeIdle ? "DAMPING / READY" : "STOPPED";
+    std::ostringstream text;
+    text << (hardware_ ? "LIVE G1 - measured joints + odometry" : "MuJoCo simulation")
+         << '\n' << mode << "  |  sequence " << state.sequence
+         << '\n' << std::fixed << std::setprecision(1)
+         << "state age " << age_ms << " ms"
+         << "  |  state-to-command " << status.command_ms << " ms"
+         << "  |  faults " << status.faults;
+    if (age_ms > 100.0) text << "\nSTALE - showing last received pose";
+    if (!status.reason.empty() && status.lifecycle == LifecycleState::kFault)
+      text << '\n' << status.reason;
+    text << "\nG1 remote: Y activate / A steer / R1 idle / X damping"
+         << "\nClose window or Ctrl+C: stop controller";
+    mjr_overlay(mjFONT_NORMAL, mjGRID_TOPLEFT, viewport, text.str().c_str(),
+                nullptr, &context_);
     swap_(window_);
     poll_();
     return true;
@@ -115,6 +149,7 @@ class MujocoViewer final {
   }
 
   void* library_ = nullptr;
+  bool hardware_ = false;
   bool initialized_ = false;
   GLFWwindow* window_ = nullptr;
   mjModel* model_ = nullptr;

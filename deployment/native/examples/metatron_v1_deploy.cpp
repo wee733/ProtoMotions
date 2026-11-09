@@ -96,8 +96,8 @@ Options parse(int argc, char** argv) {
     throw std::invalid_argument("hardware requires --arm and an existing --net-if");
   if (args.scripted_sim && args.backend != "mujoco")
     throw std::invalid_argument("scripted input is simulation-only");
-  if (args.viewer && (args.backend != "mujoco" || args.glfw_library.empty()))
-    throw std::invalid_argument("--viewer needs --backend mujoco and --glfw-lib");
+  if (args.viewer && (args.xml.empty() || args.glfw_library.empty()))
+    throw std::invalid_argument("--viewer needs --xml and --glfw-lib for either backend");
   return args;
 }
 
@@ -170,8 +170,13 @@ int main(int argc, char** argv) {
     if (!args.xbox_device.empty())
       xbox = std::make_unique<EvdevXboxInputSource>(args.xbox_device);
     std::unique_ptr<AsyncMujocoViewer> viewer;
-    if (args.viewer)
-      viewer = std::make_unique<AsyncMujocoViewer>(args.xml, args.glfw_library);
+    if (args.viewer) {
+      // The viewer maps measured joints using the MJCF actuator order. Validate
+      // that order against the policy even when physics runs on the real G1.
+      if (args.backend == "unitree") sim_substeps_and_validate(args.xml, json);
+      viewer = std::make_unique<AsyncMujocoViewer>(
+          args.xml, args.glfw_library, args.backend == "unitree");
+    }
     std::unique_ptr<RobotBackend> backend;
     UnitreeSdk2Backend* unitree_backend = nullptr;
     if (args.backend == "mujoco") {
@@ -246,6 +251,10 @@ int main(int argc, char** argv) {
       next += std::chrono::milliseconds(20);
       InputState input;
       bool input_ready = false;
+      RobotState observed;
+      bool has_observed = false;
+      if (unitree_backend && (args.unitree_remote || viewer))
+        has_observed = unitree_backend->read_state(observed);
       if (args.scripted_sim) {
         input.connected = true;
         input.timestamp = Clock::now();
@@ -260,9 +269,8 @@ int main(int argc, char** argv) {
       } else if (args.unitree_remote) {
         // Poll transport independently: a faulted runtime stops advancing its
         // last_state, but the operator must still be able to request revival.
-        RobotState state;
-        if (unitree_backend->read_state(state) && state.has_operator_input)
-          remote.update(state.operator_input_data, state.sequence, state.timestamp);
+        if (has_observed && observed.has_operator_input)
+          remote.update(observed.operator_input_data, observed.sequence, observed.timestamp);
         input_ready = remote.poll(input);
       } else input_ready = xbox->poll(input);
       if (!input_ready ||
@@ -356,7 +364,11 @@ int main(int argc, char** argv) {
                   << " buttons=" << input.buttons << std::endl;
       }
       if (viewer) {
-        viewer->publish(runtime.last_state());
+        // A fault freezes the policy's last accepted state, not the robot.
+        // Continue displaying fresh transport measurements while damping.
+        viewer->publish(has_observed ? observed : runtime.last_state(),
+                        {runtime.lifecycle(), steering, command_ms,
+                         runtime.fault_count(), runtime.last_fault_reason()});
         if (viewer->closed()) break;
       }
       ++count;

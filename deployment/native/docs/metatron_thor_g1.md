@@ -158,6 +158,15 @@ samples in `g1-runtime.log` measure state-read to command-ready, excluding senso
 acquisition and downstream transport; the policy benchmark is a different boundary.
 The paper's 1.3 ms RTX 5090 result is not a Thor measurement.
 
+During the physical run, another `VLLM::EngineCore` process appeared on the
+same Thor GPU (about 40.7 GiB reported GPU memory). The once-per-second control
+samples included intervals above 20 ms, with an observed maximum of 31.89 ms;
+no runtime fault was logged. Shared GPU contention is a plausible contributor,
+but no isolated A/B comparison was performed. This run therefore does not
+establish a 20 ms worst-case deadline under concurrent model serving. The
+standalone benchmark and the zero-overrun simulation table above must not be
+used to claim otherwise. The unrelated serving process was left unchanged.
+
 Object interaction, motion tracking, style selection and PICO control are not
 exposed by this launcher. Neither the standing/walking result nor the unit tests
 establish reproduction of every paper skill. The failed prone fixture remains
